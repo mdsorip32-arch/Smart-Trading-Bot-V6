@@ -1,4 +1,7 @@
 import telebot
+import time
+import threading
+
 
 # আপনার টোকেন এবং আইডি
 API_TOKEN = '8313878507:AAGEFzxp1tCPC9i6TqTA3xftZD7lRfe7d1c'
@@ -47,6 +50,28 @@ if __name__ == "__main__":
     print("Bot is running with Multi-Layer Filters...")
     try:
         bot.send_message(ADMIN_ID, "আপনার বটটি নতুন সব শর্তসহ (EMA, ADX 20, Volume, HTF Trend) সচল হয়েছে। নিউজ ফিল্টার বন্ধ রাখা হয়েছে।")
-        bot.infinity_polling()
+        
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}") 
+        # ৩০ মিনিট পর পর অটো-রিপোর্ট দেওয়ার ফাংশন
+def scheduled_report():
+    while True:
+        try:
+            current_time = time.strftime("%H:%M:%S")
+            status_text = f"✅ ৩০ মিনিটের অটো-স্ক্যান সচল।\n⏰ সময়: {current_time}\n📊 অবস্থা: বট সক্রিয়ভাবে মার্কেট পর্যবেক্ষণ করছে।"
+            bot.send_message(ADMIN_ID, status_text)
+        except Exception as e:
+            print(f"Error in schedule: {e}")
+        time.sleep(1800) # ১৮০০ সেকেন্ড = ৩০ মিনিট
+
+# থ্রেডিং শুরু করা (এটি নিশ্চিত করুন যেন bot.polling এর ঠিক উপরে থাকে)
+report_thread = threading.Thread(target=scheduled_report)
+report_thread.daemon = True
+report_thread.start() 
+
+
+
+# সবার শেষে এই লাইনটি থাকবে
+bot.infinity_polling()
+
+
