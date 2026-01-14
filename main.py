@@ -80,4 +80,8 @@ if __name__ == "__main__":
     while True:
         check_market()
         time.sleep(300)
+                # ৩০ মিনিট পর পর মেসেজ পাঠানোর লজিক
+        if int(time.time()) % 1800 < 300:
+            bot.send_message(USER_ID, "✅ আপনি বর্তমানে অ্যাক্টিভ রয়েছেন।")
+            
         
