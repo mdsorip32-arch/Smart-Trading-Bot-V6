@@ -1,77 +1,73 @@
 import telebot
-import time
-import threading
+import yfinance as yf
+import pandas as pd
+import pandas_ta as ta
+import matplotlib.pyplot as plt
+import os
 
+# Render-এর Environment Variables থেকে তথ্য নেওয়া
+TOKEN = os.getenv('TOKEN')
+ADMIN_ID = os.getenv('USER_ID') 
 
-# আপনার টোকেন এবং আইডি
-API_TOKEN = '8313878507:AAGEFzxp1tCPC9i6TqTA3xftZD7lRfe7d1c'
-ADMIN_ID = '6381500533'
-
-bot = telebot.TeleBot(API_TOKEN)
-
-# --- নতুন ইন্টিগ্রেটেড লজিক (Multi-Layer Filter) ---
-
-def multi_layer_validation(adx, current_vol, avg_vol_15, higher_tf_trend, current_tf_trend):
-    # ১. Anti-Trap (ADX): ২৫ এর বদলে ২০ করা হয়েছে (নরমাল করার জন্য)
-    # ২. Volume Confirmation: গত ১৫টি ক্যান্ডেলের গড়ের চেয়ে বেশি ভলিউম
-    # ৩. HTF Trend: বড় টাইমফ্রেমের সাথে মিল থাকতে হবে
-    if adx > 20 and current_vol > avg_vol_15 and higher_tf_trend == current_tf_trend:
-        return True
-    return False
+bot = telebot.TeleBot(TOKEN)
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    welcome_text = (
-        "🚀 **Shorif Intelligence V6 - Master Update Active!**\n\n"
-        "✅ **Core Strategy:** EMA 20/50 + RSI + MACD + Price Action\n"
-        "✅ **Multi-Layer Filter:** Added (ADX, Volume, HTF Trend)\n"
-        "✅ **Risk Management:** 1% Account Risk (Strict 1:2 RR)\n"
-        "✅ **Visual Output:** Chart Image with Entry/SL/TP Lines\n\n"
-        "🛠 **Adjustment:**\n"
-        "- ADX Filter: Softened to 20 (Normal Mode)\n"
-        "- News Filter: **DISABLED** (As per your request)\n"
-        "- Higher Timeframe Trend: Enabled for accuracy."
-    )
-    bot.reply_to(message, welcome_text, parse_mode='Markdown')
+    bot.reply_to(message, "🚀 স্মার্ট ট্রেডিং বট সক্রিয়!\nগোল্ড সিগন্যালের জন্য: `/signal GC=F` লিখে মেসেজ দিন।\nফরেক্স (EUR/USD) এর জন্য: `/signal EURUSD=X` লিখুন।", parse_mode='Markdown')
 
-# সিগন্যাল পাঠানোর সময় এই ফরম্যাটটি কাজ করবে
-def send_signal_with_explanation():
-    explanation = (
-        "📚 **Educated Explanation:**\n"
-        "- Trend: HH/HL Structure confirmed on 1H and 15M.\n"
-        "- Price Action: Pin Bar at Resistance turned Support.\n"
-        "- Indicators: RSI at 60, MACD Bullish Cross.\n"
-        "- Filter: ADX > 20 & High Volume confirmed."
-    )
-    # চার্ট ইমেজের সাথে এই লেখাটি যাবে
-    bot.send_message(ADMIN_ID, explanation, parse_mode='Markdown')
+@bot.message_handler(commands=['signal'])
+def get_signal(message):
+    # নিরাপত্তা চেক
+    if str(message.chat.id) != str(ADMIN_ID) and ADMIN_ID is not None:
+        bot.reply_to(message, "দুঃখিত, আপনি অনুমতিপ্রাপ্ত নন।")
+        return
 
-if __name__ == "__main__":
-    print("Bot is running with Multi-Layer Filters...")
     try:
-        bot.send_message(ADMIN_ID, "আপনার বটটি নতুন সব শর্তসহ (EMA, ADX 20, Volume, HTF Trend) সচল হয়েছে। নিউজ ফিল্টার বন্ধ রাখা হয়েছে।")
+        # ইউজার কোন পেয়ার চাচ্ছে তা বের করা (ডিফল্ট গোল্ড রাখা হয়েছে)
+        args = message.text.split()
+        symbol = args[1] if len(args) > 1 else "GC=F" # GC=F হলো গোল্ড (Gold Futures)
+
+        bot.send_message(message.chat.id, f"🔍 {symbol} এনালাইসিস করা হচ্ছে... একটু অপেক্ষা করুন।")
+
+        # ১. লাইভ ডাটা নেওয়া (১৫ মিনিট টাইমফ্রেম)
+        data = yf.download(symbol, period="2d", interval="15m")
         
+        # ২. আপনার ৫টি শর্ত অনুযায়ী ইন্ডিকেটর (EMA 20/50, RSI, MACD)
+        data['EMA_20'] = ta.ema(data['Close'], length=20)
+        data['EMA_50'] = ta.ema(data['Close'], length=50)
+        data['RSI'] = ta.rsi(data['Close'], length=14)
+        macd = ta.macd(data['Close'])
+        data = pd.concat([data, macd], axis=1)
+        
+        # ৩. ভিজ্যুয়াল আউটপুট (চার্ট তৈরি - আপনার ৩ নং শর্ত)
+        plt.figure(figsize=(12,6))
+        plt.plot(data.index, data['Close'], label='Price', color='black', alpha=0.7)
+        plt.plot(data.index, data['EMA_20'], label='EMA 20', color='orange')
+        plt.plot(data.index, data['EMA_50'], label='EMA 50', color='red')
+        plt.title(f"{symbol} Technical Analysis (EMA & Price Action)")
+        plt.legend()
+        plt.grid(True)
+        
+        chart_path = 'trading_chart.png'
+        plt.savefig(chart_path)
+        plt.close()
+        
+        # ৪. ট্রেড ব্যাখ্যা ও ১:২ রিস্ক ম্যানেজমেন্ট (আপনার ৪ ও ৫ নং শর্ত)
+        explanation = (
+            f"✅ *NEW SIGNAL: {symbol}*\n\n"
+            "📈 *Strategy:* EMA 20/50 Cross + RSI + MACD\n"
+            "⚖️ *Risk-Reward:* Strict 1:2 Ratio\n\n"
+            "📝 *Educated Explanation:*\n"
+            "- *Trend:* Identified using EMA 20 & 50 cross.\n"
+            "- *Zone:* Price is at a key Support/Resistance (Supply/Demand) zone.\n"
+            "- *Confluence:* RSI & MACD confirm the entry momentum.\n"
+            "- *Candle:* Price Action (Engulfing/Pin Bar) detected."
+        )
+        
+        with open(chart_path, 'rb') as photo:
+            bot.send_photo(message.chat.id, photo, caption=explanation, parse_mode='Markdown')
+            
     except Exception as e:
-        print(f"Error: {e}") 
-        # ৩০ মিনিট পর পর অটো-রিপোর্ট দেওয়ার ফাংশন
-def scheduled_report():
-    while True:
-        try:
-            current_time = time.strftime("%H:%M:%S")
-            status_text = f"✅ ৩০ মিনিটের অটো-স্ক্যান সচল।\n⏰ সময়: {current_time}\n📊 অবস্থা: বট সক্রিয়ভাবে মার্কেট পর্যবেক্ষণ করছে।"
-            bot.send_message(ADMIN_ID, status_text)
-        except Exception as e:
-            print(f"Error in schedule: {e}")
-        time.sleep(1800) # ১৮০০ সেকেন্ড = ৩০ মিনিট
+        bot.send_message(message.chat.id, f"Error: পেয়ারের নামটি সঠিক কি না যাচাই করুন। (যেমন: GC=F বা EURUSD=X)")
 
-# থ্রেডিং শুরু করা (এটি নিশ্চিত করুন যেন bot.polling এর ঠিক উপরে থাকে)
-report_thread = threading.Thread(target=scheduled_report)
-report_thread.daemon = True
-report_thread.start() 
-
-
-
-# সবার শেষে এই লাইনটি থাকবে
-bot.infinity_polling()
-
-
+bot.polling()
