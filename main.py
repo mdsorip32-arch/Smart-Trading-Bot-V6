@@ -2,72 +2,82 @@ import telebot
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
-import matplotlib.pyplot as plt
+import mplfinance as mpf
+import time
 import os
 
-# Render-এর Environment Variables থেকে তথ্য নেওয়া
+# Render Environment Variables
 TOKEN = os.getenv('TOKEN')
-ADMIN_ID = os.getenv('USER_ID') 
-
+USER_ID = os.getenv('USER_ID')
 bot = telebot.TeleBot(TOKEN)
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, "🚀 স্মার্ট ট্রেডিং বট সক্রিয়!\nগোল্ড সিগন্যালের জন্য: `/signal GC=F` লিখে মেসেজ দিন।\nফরেক্স (EUR/USD) এর জন্য: `/signal EURUSD=X` লিখুন।", parse_mode='Markdown')
+SYMBOLS = ['GC=F', 'BTC-USD', 'EURUSD=X'] 
 
-@bot.message_handler(commands=['signal'])
-def get_signal(message):
-    # নিরাপত্তা চেক
-    if str(message.chat.id) != str(ADMIN_ID) and ADMIN_ID is not None:
-        bot.reply_to(message, "দুঃখিত, আপনি অনুমতিপ্রাপ্ত নন।")
-        return
+def check_market():
+    for symbol in SYMBOLS:
+        try:
+            # ১৫ মিনিটের ডাটা ডাউনলোড (আপনি চাইলে '30m' বা '5m' করতে পারেন)
+            df = yf.download(symbol, interval='15m', period='2d', progress=False)
+            if df.empty: continue
 
-    try:
-        # ইউজার কোন পেয়ার চাচ্ছে তা বের করা (ডিফল্ট গোল্ড রাখা হয়েছে)
-        args = message.text.split()
-        symbol = args[1] if len(args) > 1 else "GC=F" # GC=F হলো গোল্ড (Gold Futures)
-
-        bot.send_message(message.chat.id, f"🔍 {symbol} এনালাইসিস করা হচ্ছে... একটু অপেক্ষা করুন।")
-
-        # ১. লাইভ ডাটা নেওয়া (১৫ মিনিট টাইমফ্রেম)
-        data = yf.download(symbol, period="2d", interval="15m")
-        
-        # ২. আপনার ৫টি শর্ত অনুযায়ী ইন্ডিকেটর (EMA 20/50, RSI, MACD)
-        data['EMA_20'] = ta.ema(data['Close'], length=20)
-        data['EMA_50'] = ta.ema(data['Close'], length=50)
-        data['RSI'] = ta.rsi(data['Close'], length=14)
-        macd = ta.macd(data['Close'])
-        data = pd.concat([data, macd], axis=1)
-        
-        # ৩. ভিজ্যুয়াল আউটপুট (চার্ট তৈরি - আপনার ৩ নং শর্ত)
-        plt.figure(figsize=(12,6))
-        plt.plot(data.index, data['Close'], label='Price', color='black', alpha=0.7)
-        plt.plot(data.index, data['EMA_20'], label='EMA 20', color='orange')
-        plt.plot(data.index, data['EMA_50'], label='EMA 50', color='red')
-        plt.title(f"{symbol} Technical Analysis (EMA & Price Action)")
-        plt.legend()
-        plt.grid(True)
-        
-        chart_path = 'trading_chart.png'
-        plt.savefig(chart_path)
-        plt.close()
-        
-        # ৪. ট্রেড ব্যাখ্যা ও ১:২ রিস্ক ম্যানেজমেন্ট (আপনার ৪ ও ৫ নং শর্ত)
-        explanation = (
-            f"✅ *NEW SIGNAL: {symbol}*\n\n"
-            "📈 *Strategy:* EMA 20/50 Cross + RSI + MACD\n"
-            "⚖️ *Risk-Reward:* Strict 1:2 Ratio\n\n"
-            "📝 *Educated Explanation:*\n"
-            "- *Trend:* Identified using EMA 20 & 50 cross.\n"
-            "- *Zone:* Price is at a key Support/Resistance (Supply/Demand) zone.\n"
-            "- *Confluence:* RSI & MACD confirm the entry momentum.\n"
-            "- *Candle:* Price Action (Engulfing/Pin Bar) detected."
-        )
-        
-        with open(chart_path, 'rb') as photo:
-            bot.send_photo(message.chat.id, photo, caption=explanation, parse_mode='Markdown')
+            # ইন্ডিকেটর
+            df['EMA_20'] = ta.ema(df['Close'], length=20)
+            df['EMA_50'] = ta.ema(df['Close'], length=50)
+            df.ta.rsi(append=True)
             
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Error: পেয়ারের নামটি সঠিক কি না যাচাই করুন। (যেমন: GC=F বা EURUSD=X)")
+            last_row = df.iloc[-1]
+            prev_row = df.iloc[-2]
+            
+            # সিগন্যাল লজিক (EMA Cross)
+            if (prev_row['EMA_20'] < prev_row['EMA_50']) and (last_row['EMA_20'] > last_row['EMA_50']):
+                create_chart_and_send(symbol, df, "BUY")
+                
+        except Exception as e:
+            print(f"Error: {e}")
 
-bot.polling()
+def create_chart_and_send(symbol, df, side):
+    # শেষ ৩০টি ক্যান্ডেল চার্টে দেখাবে
+    df_plot = df.tail(30).copy()
+    
+    price = float(df_plot['Close'].iloc[-1])
+    # ক্যান্ডেল অনুযায়ী স্টপ লস (শেষ ২ ক্যান্ডেলের লো এর নিচে)
+    stop_loss = float(df_plot['Low'].iloc[-2:].min() * 0.999) 
+    take_profit = float(price + (price - stop_loss) * 2) # ১:২ রিস্ক রিওয়ার্ড
+
+    # চার্টে লাইন যোগ করা (SL, TP, Entry)
+    lines = [
+        mpf.make_addplot([price]*len(df_plot), color='blue', linestyle='--'),   # Entry
+        mpf.make_addplot([stop_loss]*len(df_plot), color='red', linestyle='-'), # SL
+        mpf.make_addplot([take_profit]*len(df_plot), color='green', linestyle='-') # TP
+    ]
+
+    chart_filename = f"{symbol}_chart.png"
+    
+    # ক্যান্ডেলস্টিক চার্ট তৈরি
+    mpf.plot(df_plot, type='candle', style='charles', 
+             title=f"{symbol} {side} Signal",
+             ylabel='Price',
+             addplot=lines,
+             savefig=chart_filename)
+
+    # টেলিগ্রামে ছবি ও ডিটেইলস পাঠানো
+    caption = (
+        f"🚨 **NEW SIGNAL: {symbol}** 🚨\n\n"
+        f"📈 **Action:** {side}\n"
+        f"💰 **Entry:** {round(price, 2)}\n"
+        f"🛑 **Stop Loss:** {round(stop_loss, 2)}\n"
+        f"🎯 **Target (TP): {round(take_profit, 2)}**\n\n"
+        f"📊 *Chart: 15m Candles with SL/TP lines*"
+    )
+    
+    with open(chart_filename, 'rb') as photo:
+        bot.send_photo(USER_ID, photo, caption=caption, parse_mode='Markdown')
+    
+    os.remove(chart_filename) # ছবি পাঠিয়ে ডিলিট করে দেওয়া
+
+if __name__ == "__main__":
+    bot.send_message(USER_ID, "🚀 Automatic Candle Scanner Started!")
+    while True:
+        check_market()
+        time.sleep(300)
+        
