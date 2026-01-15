@@ -1,5 +1,7 @@
 import telebot
 import ccxt
+import pandas as pd
+import pandas_ta as ta
 import time
 import os
 import pytz
@@ -16,42 +18,49 @@ SAUDI_TZ = pytz.timezone('Asia/Riyadh')
 def get_saudi_time():
     return datetime.now(SAUDI_TZ).strftime('%I:%M:%S %p')
 
-def send_signal():
+def get_signal():
     try:
-        # ২. দ্রুত লাইভ প্রাইস সংগ্রহ
-        ticker = exchange.fetch_ticker(SYMBOL)
-        price = ticker['last']
-        open_price = ticker['open']
+        # ২. মার্কেট ডাটা সংগ্রহ (এনালাইসিসের জন্য ৩০টি ক্যান্ডেল)
+        bars = exchange.fetch_ohlcv(SYMBOL, timeframe='1m', limit=30)
+        df = pd.DataFrame(bars, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
         
-        # ৩. খুব সহজ লজিক (যাতে প্রতি মিনিটে সিগন্যাল পান)
-        if price > open_price:
+        # ৩. টেকনিক্যাল এনালাইসিস (ক্যালকুলেশন)
+        # RSI ক্যালকুলেশন (মার্কেট কি খুব উপরে নাকি খুব নিচে তা বুঝবে)
+        df['RSI'] = ta.rsi(df['close'], length=14)
+        # EMA (মার্কেট ট্রেন্ড বোঝার জন্য)
+        df['EMA'] = ta.ema(df['close'], length=10)
+        
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
+        
+        # ৪. বুদ্ধিমত্তার সাথে সিদ্ধান্ত গ্রহণ (Logic)
+        # যদি RSI ৩০ এর নিচে থাকে (Oversold) এবং দাম বাড়ছে - UP সিগন্যাল
+        if last['close'] > last['EMA'] and last['RSI'] < 70:
             status = "🟢 **PREDICTION: UP** 🟢"
-            decision = "🚀 ১ মিনিটের জন্য BUY ট্রেড নিন!"
-        elif price < open_price:
+            logic = "Analysis: Market is Bullish (EMA Support)"
+        # যদি RSI ৭০ এর উপরে থাকে (Overbought) এবং দাম কমছে - DOWN সিগন্যাল
+        elif last['close'] < last['EMA'] and last['RSI'] > 30:
             status = "🔴 **PREDICTION: DOWN** 🔴"
-            decision = "📉 ১ মিনিটের জন্য SELL ট্রেড নিন!"
+            logic = "Analysis: Market is Bearish (EMA Resistance)"
         else:
             status = "⏳ **WAITING** ⏳"
-            decision = "⚠️ মার্কেট এখন স্থির।"
+            logic = "Analysis: Market is Sideways. No safe trade."
 
-        # ৪. সিগন্যাল মেসেজ
-        msg = (
-            f"🎯 **POCKET OPTION LIVE**\n"
-            f"🕒 Time: {get_saudi_time()}\n"
-            f"💹 Pair: {SYMBOL}\n\n"
-            f"📢 **Decision: {status}**\n"
-            f"📝 {decision}\n\n"
-            f"💰 Price: {price}"
-        )
+        # ৫. সিগন্যাল পাঠানো
+        msg = (f"🎯 **SMART ANALYZER**\n"
+               f"🕒 Time: {get_saudi_time()}\n"
+               f"💹 Asset: {SYMBOL}\n"
+               f"📊 {logic}\n\n"
+               f"📢 **Decision: {status}**\n"
+               f"💰 Live Price: {last['close']}")
+        
         bot.send_message(USER_ID, msg, parse_mode='Markdown')
-        print(f"Signal sent at {get_saudi_time()}")
 
     except Exception as e:
         print(f"Error: {e}")
 
 if __name__ == "__main__":
-    bot.send_message(USER_ID, "✅ বট এখন ১০০% একটিভ। প্রতি মিনিটে সিগন্যাল আসবে।")
+    bot.send_message(USER_ID, "✅ এনালাইসিস মোড চালু হয়েছে। বট এখন মার্কেট ক্যালকুলেশন করছে...")
     while True:
-        send_signal()
-        # ৫. বিরতি কমিয়ে ৬০ সেকেন্ডের বদলে ৩০ সেকেন্ড করা হলো যাতে কানেকশন না কাটে
-        time.sleep(30) 
+        get_signal()
+        time.sleep(60) # প্রতি ১ মিনিটে একটি নিখুঁত এনালাইসিস
