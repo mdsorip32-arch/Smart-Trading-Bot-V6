@@ -1,6 +1,5 @@
 pyTelegramBotAPI
-yfinance
+ccxt
 pandas
 pandas_ta
-matplotlib
-mplfinance
+pytz
