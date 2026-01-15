@@ -3,53 +3,73 @@ import ccxt
 import time
 import os
 import pytz
+import threading
 from datetime import datetime
 
-# ১. কানেকশন
-TOKEN = os.getenv('TOKEN')
-USER_ID = os.getenv('USER_ID')
-bot = telebot.TeleBot(TOKEN)
-exchange = ccxt.binance() 
-SYMBOL = 'BTC/USDT'
-SAUDI_TZ = pytz.timezone('Asia/Riyadh')
+# ===== CONFIG =====
+TOKEN = os.getenv("TOKEN")
+USER_ID = int(os.getenv("USER_ID"))
+
+bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
+exchange = ccxt.binance({"enableRateLimit": True})
+SYMBOL = "BTC/USDT"
+SAUDI_TZ = pytz.timezone("Asia/Riyadh")
+
+trading_active = False
 
 def get_saudi_time():
     return datetime.now(SAUDI_TZ).strftime('%I:%M:%S %p')
 
-def start_trading():
-    # বট চালু হওয়া মাত্র মেসেজ দিবে
-    bot.send_message(USER_ID, "✅ লাইভ সিগন্যাল সার্ভিস শুরু হয়েছে! প্রতি মিনিটে আপডেট পাবেন।")
-    
-    while True:
-        try:
-            # ২. দ্রুত লাইভ ডাটা (এনালাইসিস সহ)
-            ticker = exchange.fetch_ticker(SYMBOL)
-            price = ticker['last']
-            open_price = ticker['open']
-            
-            # ৩. এনালাইসিস লজিক
-            if price > open_price:
-                res = "🟢 **PREDICTION: UP** 🟢\n🚀 ১ মিনিটের জন্য BUY ট্রেড নিন।"
-            elif price < open_price:
-                res = "🔴 **PREDICTION: DOWN** 🔴\n📉 ১ মিনিটের জন্য SELL ট্রেড নিন।"
-            else:
-                res = "⏳ **HOLD** ⏳\n⚠️ মার্কেট স্থির আছে।"
+def trading_loop():
+    global trading_active
 
-            # ৪. মেসেজ পাঠানো
-            msg = (f"🎯 **POCKET OPTION SIGNAL**\n"
-                   f"🕒 Time: {get_saudi_time()}\n"
-                   f"💹 Asset: {SYMBOL}\n\n"
-                   f"📢 {res}\n\n"
-                   f"💰 Price: {price}")
-            
-            bot.send_message(USER_ID, msg, parse_mode='Markdown')
-            
-            # ঠিক ৬০ সেকেন্ড বিরতি
+    bot.send_message(USER_ID, "✅ লাইভ BTC সিগন্যাল শুরু হয়েছে")
+
+    while trading_active:
+        try:
+            ticker = exchange.fetch_ticker(SYMBOL)
+            price = ticker["last"]
+            open_price = ticker["open"]
+
+            if price > open_price:
+                res = "🟢 *BUY* (১ মিনিট)"
+            elif price < open_price:
+                res = "🔴 *SELL* (১ মিনিট)"
+            else:
+                res = "⏸ *HOLD*"
+
+            msg = (
+                f"📊 *BTC SIGNAL*\n"
+                f"🕒 {get_saudi_time()}\n"
+                f"💹 {SYMBOL}\n\n"
+                f"{res}\n"
+                f"💰 Price: `{price}`"
+            )
+
+            bot.send_message(USER_ID, msg)
             time.sleep(60)
 
         except Exception as e:
-            time.sleep(10)
+            bot.send_message(USER_ID, f"⚠️ Error: `{e}`")
+            time.sleep(15)
 
-if __name__ == "__main__":
-    start_trading()
-            
+@bot.message_handler(commands=["start"])
+def start(message):
+    global trading_active
+
+    if trading_active:
+        bot.reply_to(message, "⚠️ ট্রেডিং আগেই চালু আছে")
+        return
+
+    trading_active = True
+    threading.Thread(target=trading_loop).start()
+    bot.reply_to(message, "🚀 ট্রেডিং চালু করা হয়েছে")
+
+@bot.message_handler(commands=["stop"])
+def stop(message):
+    global trading_active
+    trading_active = False
+    bot.reply_to(message, "⛔ ট্রেডিং বন্ধ করা হয়েছে")
+
+# ===== BOT RUN =====
+bot.infinity_polling()
